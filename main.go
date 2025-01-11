@@ -1,79 +1,91 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sony/gobreaker/v2"
 )
 
-// proxyRequest handles proxying HTTP requests to a specified service URL.
-//
-// The function takes a Gin context and target service URL as parameters and:
-// - Parses the target URL and appends any additional path parameters
-// - Creates a new HTTP request copying the original method, body and headers
-// - Sends the request to the target service
-// - Copies the response headers and status code back to the original request
-// - Streams the response body back to the client
+var CircuitBreakerConfig map[string]*gobreaker.CircuitBreaker[any]
+
+// proxyRequest handles proxying the incoming request to the specified service URL
+// and returns the response back to the client. It uses a circuit breaker to manage
+// the request execution and handle failures gracefully.
 //
 // Parameters:
-//   - c *gin.Context: The Gin context containing the original HTTP request
-//   - serviceURL string: The base URL of the target service to proxy to
+//   - c: The Gin context for the current request.
+//   - serviceURL: The URL of the target service to which the request should be proxied.
+//   - cb: A circuit breaker instance to manage the request execution.
 //
-// The function handles several error cases:
-// - Invalid target URL parsing
-// - Request creation errors
-// - Request sending errors
-// - Response copying errors
+// The function performs the following steps:
+//  1. Parses the service URL and logs the full proxy URL.
+//  2. Executes the request using the circuit breaker.
+//  3. Creates a new HTTP request with the same method and body as the original request.
+//  4. Copies the headers from the original request to the new request.
+//  5. Sends the new request to the target service and receives the response.
+//  6. Copies the response headers and body back to the original client response.
+//  7. Handles errors at each step and returns appropriate HTTP status codes and messages.
 //
-// In case of errors, it returns appropriate HTTP 500 status codes with error messages.
-func proxyRequest(c *gin.Context, serviceURL string) {
+// If the target URL is invalid, it returns a 500 Internal Server Error.
+// If the circuit breaker is open or the request fails, it returns a 503 Service Unavailable.
+func proxyRequest(c *gin.Context, serviceURL string, cb *gobreaker.CircuitBreaker[any]) {
 
-	proxyUrl, error := url.Parse(serviceURL)
+	proxyUrl, err := url.Parse(serviceURL)
 	log.Print("Proxy URL: ", proxyUrl.String()+c.Param("rest"))
 
-	if error != nil {
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
 		return
 	}
+	_, err = cb.Execute(func() (interface{}, error) {
+		req, err := http.NewRequest(c.Request.Method, proxyUrl.String()+c.Param("rest"), c.Request.Body)
 
-	req, err := http.NewRequest(c.Request.Method, proxyUrl.String()+c.Param("rest"), c.Request.Body)
+		if err != nil {
+			return nil, errors.New("Error creating request")
+		}
+
+		req.Header = c.Request.Header
+
+		client := &http.Client{}
+
+		resp, err := client.Do(req)
+
+		if err != nil {
+			return nil, errors.New("Error sending request")
+		}
+
+		for k, v := range resp.Header {
+			c.Header(k, v[0])
+		}
+
+		defer resp.Body.Close()
+
+		c.Status(resp.StatusCode)
+
+		j, err := io.Copy(c.Writer, resp.Body)
+
+		log.Print("Copied: ", j)
+
+		if err != nil {
+			return nil, errors.New("Error copying response body")
+		}
+
+		return nil, nil
+	})
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating request"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Service unavailable",
+			"msg":   err.Error(),
+		})
 		return
 	}
-
-	req.Header = c.Request.Header
-
-	client := &http.Client{}
-
-	resp, err := client.Do(req)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending request"})
-		return
-	}
-
-	// TODO - if header has multiple values, then we need to send all values
-	for k, v := range resp.Header {
-		c.Header(k, v[0])
-	}
-
-	c.Status(resp.StatusCode)
-
-	j, err := io.Copy(c.Writer, resp.Body)
-
-	log.Print("Copied: ", j)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error copying response"})
-		return
-	}
-
-	defer resp.Body.Close()
 
 }
 
@@ -85,27 +97,33 @@ func main() {
 		"/loans":   "http://localhost:8081",
 	}
 
+	CircuitBreakerConfig = make(map[string]*gobreaker.CircuitBreaker[interface{}])
+
+	for prefix := range services {
+		cbSetting := gobreaker.Settings{
+			Name: prefix,
+			ReadyToTrip: func(counts gobreaker.Counts) bool {
+				return counts.ConsecutiveFailures > 5
+			},
+			OnStateChange: func(name string, from, to gobreaker.State) {
+				log.Printf("Circuit breaker for %s changed state from %s to %s", name, from.String(), to.String())
+			},
+			MaxRequests: 5,
+			Timeout:     5 * time.Second,
+		}
+
+		CircuitBreakerConfig[prefix] = gobreaker.NewCircuitBreaker[any](cbSetting)
+
+	}
+
 	for prefix, targetUrl := range services {
-		r.GET(prefix+"/*rest", func(c *gin.Context) {
-			log.Print("Request URL: ", c.Param("rest"))
-			proxyRequest(c, targetUrl)
+
+		cb := CircuitBreakerConfig[prefix]
+
+		r.Any(prefix+"/*rest", func(c *gin.Context) {
+			proxyRequest(c, targetUrl, cb)
 		})
 
-		r.POST(prefix+"/*rest", func(c *gin.Context) {
-			proxyRequest(c, targetUrl)
-		})
-
-		r.PUT(prefix+"/*rest", func(c *gin.Context) {
-			proxyRequest(c, targetUrl)
-		})
-
-		r.DELETE(prefix+"/*rest", func(c *gin.Context) {
-			proxyRequest(c, targetUrl)
-		})
-
-		r.PATCH(prefix+"/*rest", func(c *gin.Context) {
-			proxyRequest(c, targetUrl)
-		})
 	}
 
 	r.Run(":8080")
