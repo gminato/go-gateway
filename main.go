@@ -10,9 +10,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sony/gobreaker/v2"
+	"golang.org/x/time/rate"
 )
 
 var CircuitBreakerConfig map[string]*gobreaker.CircuitBreaker[any]
+
+func RateLimterMiddleware(limiter *rate.Limiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log.Print("Limit used: ", limiter.Limit())
+		if !limiter.Allow() {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
 
 // proxyRequest handles proxying the incoming request to the specified service URL
 // and returns the response back to the client. It uses a circuit breaker to manage
@@ -100,6 +113,7 @@ func main() {
 	}
 
 	CircuitBreakerConfig = make(map[string]*gobreaker.CircuitBreaker[interface{}])
+	var RateLimiterConfig = make(map[string]*rate.Limiter)
 
 	for prefix := range services {
 		cbSetting := gobreaker.Settings{
@@ -116,13 +130,16 @@ func main() {
 
 		CircuitBreakerConfig[prefix] = gobreaker.NewCircuitBreaker[any](cbSetting)
 
+		RateLimiterConfig[prefix] = rate.NewLimiter(10, 20)
+
 	}
 
 	for prefix, targetUrl := range services {
 
 		cb := CircuitBreakerConfig[prefix]
+		limter := RateLimiterConfig[prefix]
 
-		r.Any(prefix+"/*rest", func(c *gin.Context) {
+		r.Any(prefix+"/*rest", RateLimterMiddleware(limter), func(c *gin.Context) {
 			proxyRequest(c, targetUrl, cb)
 		})
 
