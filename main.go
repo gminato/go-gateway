@@ -26,7 +26,7 @@ var CircuitBreakerConfig map[string]*gobreaker.CircuitBreaker[any]
 // The function performs the following steps:
 //  1. Parses the service URL and logs the full proxy URL.
 //  2. Executes the request using the circuit breaker.
-//  3. Creates a new HTTP request with the same method and body as the original request.
+//  3. Creates a new HTTP request with timeout of 10s with the same method and body as the original request.
 //  4. Copies the headers from the original request to the new request.
 //  5. Sends the new request to the target service and receives the response.
 //  6. Copies the response headers and body back to the original client response.
@@ -52,7 +52,9 @@ func proxyRequest(c *gin.Context, serviceURL string, cb *gobreaker.CircuitBreake
 
 		req.Header = c.Request.Header
 
-		client := &http.Client{}
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+		}
 
 		resp, err := client.Do(req)
 
