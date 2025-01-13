@@ -50,3 +50,17 @@ Configuration can be done through environment variables or a config file. See `c
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+## Roadmap
+
+- [x] Basic proxy setup
+- [x] Route management
+- [x] Error handling
+- [x] Circuit breaker
+- [x] Rate limiting
+- [ ] Comprehensive logging
+- [ ] Comprehensive logging
+- [ ] Security
+- [ ] Authentication middleware
+- [ ] Response caching
+- [ ] Metrics collection
+
