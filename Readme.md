@@ -58,7 +58,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [x] Circuit breaker
 - [x] Rate limiting
 - [ ] Comprehensive logging
-- [ ] Comprehensive logging
 - [ ] Security
 - [ ] Authentication middleware
 - [ ] Response caching
