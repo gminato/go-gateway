@@ -108,10 +108,9 @@ func main() {
 	var r *gin.Engine = gin.Default()
 
 	var services = map[string]string{
-		"/account": "http://localhost:8082",
-		"/loans":   "http://localhost:8081",
+		"/account": "http://accounts:8080",
+		"/loans":   "http://loans:8080",
 	}
-
 	CircuitBreakerConfig = make(map[string]*gobreaker.CircuitBreaker[interface{}])
 	var RateLimiterConfig = make(map[string]*rate.Limiter)
 
