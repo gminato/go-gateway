@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sony/gobreaker/v2"
 	"golang.org/x/time/rate"
 )
@@ -106,6 +108,15 @@ func proxyRequest(c *gin.Context, serviceURL string, cb *gobreaker.CircuitBreake
 
 func main() {
 	var r *gin.Engine = gin.Default()
+
+	httpRequests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "Total number of HTTP requests made.",
+	}, []string{"path", "method"})
+
+	prometheus.MustRegister(httpRequests)
+
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	var services = map[string]string{
 		"/account": "http://accounts:8080",
