@@ -58,10 +58,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [x] Circuit breaker
 - [x] Rate limiting
 - [x] Mointering using grafana and prometheus
-- [ ] Comprehensive logging
+- [x] Comprehensive logging
 - [ ] Security
 - [ ] Deploy
-- [ ] Authentication middleware
 - [ ] Response caching
 - [ ] Metrics collection
 
